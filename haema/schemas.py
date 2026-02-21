@@ -1,37 +1,35 @@
 from __future__ import annotations
 
-from pydantic import BaseModel, Field
+from typing import Literal
+from typing import Optional
+
+from pydantic import BaseModel, Field, model_validator
 
 
-class MemorySynthesisResponse(BaseModel):
-    update: list[str] = Field(
+class PreMemorySplitResponse(BaseModel):
+    contents: list[str] = Field(
         ...,
         description=(
-            "Synthesize the provided related memories and new input into an arbitrary "
-            "number of updated long-term memory entries while preserving key signal and "
-            "removing redundancy. Each entry may be short or long as needed."
+            "Expanded pre-memory text units derived from a single raw add() string input. "
+            "Split independent facts into separate items while preserving essential detail."
         ),
     )
 
 
-class NoRelatedMemoryResponse(BaseModel):
-    update: list[str] = Field(
+class MemoryReconstructionResponse(BaseModel):
+    memories: list[str] = Field(
         ...,
         description=(
-            "Reconstruct the new content into one or more durable memory entries when no "
-            "related memory exists. Prefer one memory, but output multiple if the input "
-            "contains multiple independent high-value facts. Entries may be short or long "
-            "depending on required detail."
+            "Final reconstructed long-term memory entries to store after combining "
+            "related memories and new contents. Any number of entries is allowed, and "
+            "each entry may be short or long depending on information density."
         ),
     )
-
-
-class SingleMemoryResponse(BaseModel):
-    memory: str = Field(
+    coverage: Literal["complete", "incomplete"] = Field(
         ...,
         description=(
-            "A single reconstructed memory entry distilled from one new content input. "
-            "It may be short or long depending on how much detail is necessary."
+            "Whether reconstructed memories sufficiently cover the high-value facts from "
+            "new contents. Use 'complete' when coverage is adequate, otherwise 'incomplete'."
         ),
     )
 
@@ -44,10 +42,17 @@ class CoreUpdateResponse(BaseModel):
             "Use true only when critical SOUL/TOOLS/RULE/USER changes are required."
         ),
     )
-    core_markdown: str = Field(
-        ...,
+    core_markdown: Optional[str] = Field(
+        None,
         description=(
-            "The full core memory markdown text. It must include all required sections: "
-            "# SOUL, # TOOLS, # RULE, # USER."
+            "The full core memory markdown text when should_update is true. "
+            "It must include all required sections: # SOUL, # TOOLS, # RULE, # USER. "
+            "May be null when should_update is false."
         ),
     )
+
+    @model_validator(mode="after")
+    def validate_core_markdown_when_updating(self) -> "CoreUpdateResponse":
+        if self.should_update and not self.core_markdown:
+            raise ValueError("core_markdown is required when should_update is true")
+        return self

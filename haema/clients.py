@@ -13,9 +13,19 @@ ModelT = TypeVar("ModelT", bound=BaseModel)
 
 class EmbeddingClient(ABC):
     @abstractmethod
-    def embed(self, texts: Sequence[str], output_dimensionality: int) -> NDArray[np.float32]:
+    def embed_query(self, texts: Sequence[str], output_dimensionality: int) -> NDArray[np.float32]:
         """
-        Convert each input text into a vector.
+        Convert each input query text into a vector.
+
+        Returns a 2D numpy array with:
+        - shape: (len(texts), output_dimensionality)
+        - dtype: float32
+        """
+
+    @abstractmethod
+    def embed_document(self, texts: Sequence[str], output_dimensionality: int) -> NDArray[np.float32]:
+        """
+        Convert each input document text into a vector.
 
         Returns a 2D numpy array with:
         - shape: (len(texts), output_dimensionality)

@@ -20,7 +20,13 @@ from haema import EmbeddingClient, LLMClient, Memory
 STORAGE_DIR = Path("./example_haema")
 EMBEDDING_MODEL = "gemini-embedding-001"
 LLM_MODEL = "gemini-3-flash-preview"
-OUTPUT_DIMENSIONALITY = 128
+OUTPUT_DIMENSIONALITY = 768
+
+test = {
+    "embed_query": 0,
+    "embed_document": 0,
+    "generate_structured": 0,
+}
 
 
 class GoogleGenAIEmbeddingClient(EmbeddingClient):
@@ -28,12 +34,37 @@ class GoogleGenAIEmbeddingClient(EmbeddingClient):
         self.client = client
         self.model = model
 
-    def embed(self, texts: list[str], output_dimensionality: int) -> np.ndarray:
+    def embed_query(self, texts: list[str], output_dimensionality: int) -> np.ndarray:
+        test["embed_query"] += 1
+        return self._embed(
+            texts=texts,
+            output_dimensionality=output_dimensionality,
+            task_type="RETRIEVAL_QUERY",
+        )
+
+    def embed_document(self, texts: list[str], output_dimensionality: int) -> np.ndarray:
+        test["embed_document"] += 1
+        return self._embed(
+            texts=texts,
+            output_dimensionality=output_dimensionality,
+            task_type="RETRIEVAL_DOCUMENT",
+        )
+
+    def _embed(
+        self,
+        texts: list[str],
+        output_dimensionality: int,
+        task_type: str,
+    ) -> np.ndarray:
         response = self.client.models.embed_content(
             model=self.model,
             contents=texts,
-            config=types.EmbedContentConfig(output_dimensionality=output_dimensionality),
+            config=types.EmbedContentConfig(
+                output_dimensionality=output_dimensionality,
+                task_type=task_type,
+            ),
         )
+
         vectors = [item.values for item in (response.embeddings or [])]
         return np.asarray(vectors, dtype=np.float32)
 
@@ -49,6 +80,7 @@ class GoogleGenAILLMClient(LLMClient):
         user_prompt: str,
         response_model: type[BaseModel],
     ) -> dict[str, Any]:
+        test["generate_structured"] += 1
         response = self.client.models.generate_content(
             model=self.model,
             contents=user_prompt,
@@ -71,7 +103,7 @@ def main() -> None:
     if not api_key:
         raise SystemExit("Missing GOOGLE_API_KEY environment variable.")
 
-    client = genai.Client(api_key=api_key, vertexai=False)
+    client = genai.Client(api_key=api_key)
     embedding_client = GoogleGenAIEmbeddingClient(client=client, model=EMBEDDING_MODEL)
     llm_client = GoogleGenAILLMClient(client=client, model=LLM_MODEL)
 
@@ -82,13 +114,17 @@ def main() -> None:
         llm_client=llm_client,
     )
 
-    memory.add(
-        [
-            "User prefers concise, actionable answers.",
-            "User works on HAEMA memory framework using ChromaDB.",
-            "User asked to test google-genai with Gemini flash and embedding models.",
-        ]
+    text: str = (
+        "User prefers concise, actionable answers."
+        "\n"
+        "User works on HAEMA memory framework using ChromaDB."
+        "\n"
+        "User asked to test google-genai with Gemini flash and embedding models."
+        "\n"
+        "User loves a cat."
     )
+
+    memory.add(text)
 
     print("=== CORE ===")
     print(memory.get_core())
@@ -96,6 +132,8 @@ def main() -> None:
     print(memory.get_latest(begin=1, count=3))
     print("=== SEARCH ===")
     print(memory.search("What model does the user want?", n=3))
+    print("=== TEST COUNTS ===")
+    print(test)
 
 
 if __name__ == "__main__":

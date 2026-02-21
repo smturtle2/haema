@@ -2,43 +2,50 @@
 
 ## Memory Layers
 
-HAEMA tracks three memory layers:
+HAEMA tracks three layers:
 
-- `core`: long-lived identity/policy profile (`core.md`)
-- `latest`: recency slice from long-term storage (`get_latest`)
-- `long-term`: vectorized memories in Chroma (`collection="memory"`)
+- `core`: stable identity/policy/user profile (`core.md`)
+- `latest`: recency index (`latest.sqlite3`, served by `get_latest`)
+- `long-term`: vectorized memory store (`collection="memory"`)
 
-## Data Flow in `add()`
+## N:M Reconstruction Flow in `add()`
 
-For each incoming content:
+For each `add(contents)` call:
 
-1. Embed content.
-2. Query top-k candidate memories.
-3. Filter candidates by distance cutoff.
-4. Branch:
-   - related exists: synthesize + replace
-   - no related: reconstruct fresh memory/memories
-5. Store new memories with:
-   - `timestamp` (ISO8601 UTC)
-   - `timestamp_ms` (epoch ms)
+1. Normalize all incoming strings.
+2. Batch-embed normalized contents with `embed_query`.
+3. Query related memories for each content embedding (`top_k`, cosine distance cutoff).
+4. Union all related IDs/documents across the batch.
+5. Run one LLM reconstruction call over:
+   - unioned related documents
+   - all new contents
+6. If result is incomplete or empty, run one refinement call.
+7. If still not acceptable, fallback to normalized contents.
+8. Embed final memories via `embed_document` and upsert.
+9. Delete replaced related IDs only after successful upsert.
+10. Update core once with memories added in this call.
 
-After all contents:
+## Why One Reconstruction Pass
 
-6. Run one core update pass from accumulated newly added memories.
+- Reduces repeated LLM calls for multi-content adds.
+- Allows cross-content consolidation in one output set.
+- Prevents per-content race-like overwrite behavior.
 
-## Replace Semantics
+## Replacement Safety
 
-On related-memory branch:
+Replacement order:
 
-- new synthesized memories are upserted first
-- old related memory IDs are deleted afterward
+1. upsert new memories
+2. delete old related memories
 
-This order minimizes accidental data loss if upsert fails.
+This minimizes accidental loss if upsert fails.
 
-## Core Update Policy
+## Prompt Contract
 
-Core update is intentionally conservative:
+Reconstruction prompt explicitly enforces:
 
-- only stable, high-impact information should be merged into core
-- sections are fixed: `SOUL`, `TOOLS`, `RULE`, `USER`
-- transient/session-only details should stay in latest/long-term memory
+- related memories may be empty
+- new contents are newest evidence
+- conflict resolution favors new contents
+- independent facts should split into separate memories
+- output schema strictness (`memories`, `coverage`)

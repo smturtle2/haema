@@ -10,47 +10,84 @@ CORE_TEMPLATE = """# SOUL
 """
 
 
-SYNTHESIZE_SYSTEM_PROMPT = """You are a memory synthesis engine.
-Given relevant memories and a new input, produce an updated set of memories.
-Do not over-compress. Keep enough detail for future reuse.
-Memories may be short or long depending on information density.
-Return only structured output matching the schema."""
-
-
-NO_RELATED_MEMORY_SYSTEM_PROMPT = """You are a memory compressor for no-related-memory cases.
-No relevant memory was found for the new content.
+PRE_MEMORY_SPLIT_SYSTEM_PROMPT = """You are a pre-memory expansion engine.
+You receive one raw user input string from add().
 
 Goal:
-- Reconstruct the content into durable long-term memories.
-- Prefer one memory when the content is simple.
-- Output multiple memories only when the content contains multiple independent, high-value facts.
-- Preserve important context even if a memory becomes long.
+- Expand the single raw input into multiple reusable pre-memory text units for query embedding.
+- Split independent facts/topics into separate units.
+- Keep important detail; do not over-compress.
 
 Rules:
-- Keep memories atomic and non-redundant.
-- Remove filler, repetition, and temporary detail.
-- Keep wording clear and future-reusable.
-- Length is flexible: short or long is both acceptable when justified.
+1) Output must match schema: contents: list[str]
+2) Keep each item self-contained and clear for later retrieval.
+3) Remove obvious duplicates and low-signal filler.
+4) Do not invent facts not present in the input.
+5) If the input truly represents one fact, returning one item is allowed.
 
 Return only structured output matching the schema."""
+
+
+MEMORY_RECONSTRUCTION_SYSTEM_PROMPT = """You are a long-term memory reconstruction engine.
+You receive:
+- related existing memories (may be empty), and
+- new contents from the current add() call (always non-empty).
+
+Goal:
+- Reconstruct the next durable long-term memory set that should be stored now.
+- Preserve high-value information, remove redundancy, and integrate new evidence.
+- Treat new contents as the highest-priority evidence because they are most recent.
+
+Rules:
+1) Output must match the schema with:
+   - memories: list[str]
+   - coverage: "complete" | "incomplete"
+2) Each memory should be atomic, reusable, and non-duplicated.
+3) Length is flexible: short or long is both valid when justified by information density.
+4) Do not over-compress; keep critical context required for future retrieval/use.
+5) Remove low-signal filler, repetition, and temporary/session-only details.
+6) If memories conflict:
+   - prefer new contents by default because they are more recent,
+   - treat conflicting older memory as stale unless strong evidence says both can coexist,
+   - if uncertainty remains, keep the newer statement and note uncertainty without fabricating certainty.
+7) If related memories are empty, reconstruct solely from new contents.
+8) Split independent facts into separate memories, and merge duplicate/near-duplicate facts.
+9) Never invent facts not supported by provided inputs.
+10) The output set may be smaller, equal, or larger than input memories.
+11) Set coverage:
+   - "complete": memories sufficiently cover the core facts in new contents.
+   - "incomplete": important facts from new contents are still missing.
+
+Quality bar:
+- No near-duplicate items in `memories`.
+- No obvious loss of important facts from the combined input.
+- Clear wording optimized for future semantic search and reasoning.
+
+Return only structured output matching the schema."""
+
+
+# Backward-compatible alias for older imports.
+SYNTHESIZE_SYSTEM_PROMPT = MEMORY_RECONSTRUCTION_SYSTEM_PROMPT
 
 
 CORE_UPDATE_SYSTEM_PROMPT = """You maintain an agent core memory markdown.
 You are editing the agent's deepest long-lived core identity and operating policy.
 Be conservative. Update only when the new memories contain critical, stable information.
 If unsure, do not update.
+When current core and newly added memories conflict, treat newly added memories as newer evidence.
 
 Hard format requirements:
 1) Output must support the structured schema:
    - should_update: boolean
-   - core_markdown: full markdown string
+   - core_markdown: full markdown string or null
 2) core_markdown must always contain exactly these top-level sections:
    - # SOUL
    - # TOOLS
    - # RULE
    - # USER
 3) Keep markdown plain text only, concise bullet points preferred.
-4) If should_update=false, return the original core_markdown unchanged.
+4) If should_update=false, set core_markdown to null.
+5) If should_update=true, core_markdown must be a full markdown string.
 
 Section intent and strict inclusion criteria:
 
@@ -101,9 +138,10 @@ Exclude:
 Update decision policy:
 1) Update only if at least one new memory changes core behavior materially.
 2) Prefer merge/compress over append: avoid redundancy.
-3) Resolve conflicts by recency only when confidence is high; otherwise keep prior core.
-4) Remove outdated or contradicted items only with strong evidence.
-5) Keep total core small and high signal.
+3) Resolve conflicts in favor of newly added memories by default (they are more recent).
+4) Keep prior core only when there is strong evidence that both statements can coexist or the new one is low-confidence/noisy.
+5) Remove outdated or contradicted items only with strong evidence.
+6) Keep total core small and high signal.
 
 Quality bar before should_update=true:
 - Information is stable, high-confidence, and reusable in future sessions.
@@ -113,30 +151,48 @@ Quality bar before should_update=true:
 Return only structured output matching the schema."""
 
 
-def build_synthesize_user_prompt(related_memories: list[str], new_content: str) -> str:
+def build_reconstruction_user_prompt(related_memories: list[str], new_contents: list[str]) -> str:
     related_block = "\n".join(f"- {memory}" for memory in related_memories) or "- (none)"
+    new_block = "\n".join(f"- {content}" for content in new_contents) or "- (none)"
     return (
-        "Relevant existing memories:\n"
+        "Related memories:\n"
         f"{related_block}\n\n"
-        "New content:\n"
-        f"- {new_content}\n\n"
-        "Task: synthesize them into arbitrary x new memories with no hard cap.\n"
-        "Important: do not force brevity; preserve necessary detail."
+        "New contents:\n"
+        f"{new_block}\n\n"
+        "Task: reconstruct all inputs into the next long-term memory set.\n"
+        "Requirements:\n"
+        "- Preserve critical information from new contents.\n"
+        "- Remove duplication and stale/noisy details.\n"
+        "- Give higher priority to NEW contents over older related memories.\n"
+        "- If there is contradiction, prefer NEW contents unless coexistence is clearly valid.\n"
+        "- Split independent facts into separate memories.\n"
+        "- Keep necessary detail (do not force brevity).\n"
+        "- Do not invent unsupported facts.\n"
+        "- Return only schema fields."
     )
 
 
-def build_no_related_memory_user_prompt(content: str, allow_multiple: bool) -> str:
-    policy = (
-        "You MAY output multiple memories if needed."
-        if allow_multiple
-        else "Output exactly one memory unless absolutely necessary to split."
-    )
+def build_reconstruction_refine_user_prompt(base_prompt: str) -> str:
     return (
-        "New content:\n"
+        f"{base_prompt}\n\n"
+        "Quality correction:\n"
+        "- Previous output was incomplete or over-compressed.\n"
+        "- Expand coverage for all high-value facts in New contents.\n"
+        "- Split independent facts more aggressively.\n"
+        "- Keep coverage='complete' only when major facts are covered."
+    )
+
+
+def build_pre_memory_split_user_prompt(content: str) -> str:
+    return (
+        "Raw add() input string:\n"
         f"- {content}\n\n"
-        f"Policy: {policy}\n"
-        "Task: reconstruct this into durable memory entries.\n"
-        "Important: memory length can be long when detail is necessary."
+        "Task: expand this single input into multiple pre-memory text units when useful.\n"
+        "Requirements:\n"
+        "- Split independent facts/topics.\n"
+        "- Preserve key detail.\n"
+        "- Remove duplicates/filler.\n"
+        "- Return schema fields only."
     )
 
 
@@ -150,6 +206,7 @@ def build_core_update_user_prompt(current_core: str, new_memories: list[str]) ->
         "Task:\n"
         "1) Decide whether core update is necessary under strict conservative policy.\n"
         "2) If needed, return full updated markdown with # SOUL, # TOOLS, # RULE, # USER sections.\n"
-        "3) Keep only durable, high-impact, cross-session information.\n"
-        "4) Remove duplicates and avoid temporary/session-specific details."
+        "3) If current core conflicts with newly added memories, prioritize newly added memories as newer evidence.\n"
+        "4) Keep only durable, high-impact, cross-session information.\n"
+        "5) Remove duplicates and avoid temporary/session-specific details."
     )
