@@ -1,0 +1,23 @@
+[build-system]
+requires = ["hatchling>=1.24.2"]
+build-backend = "hatchling.build"
+
+[project]
+name = "haema"
+version = "0.1.0"
+description = "HAEMA memory framework built on ChromaDB"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "HAEMA Contributors" }]
+dependencies = [
+  "chromadb>=0.5.0",
+  "numpy>=1.26.0",
+  "pydantic>=2.7.0",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0.0"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["haema"]
