@@ -90,10 +90,40 @@ Must return a dict parseable by `response_model`.
 - `memories: list[str]`
 - `coverage: Literal["complete", "incomplete"]`
 
+Interpretation:
+
+- `memories` must represent integrated long-term entries from related + new evidence.
+- prioritize new evidence on conflict.
+- keep entries atomic and non-duplicated.
+- do not perform core editing in this stage.
+
+- `coverage="complete"` only when important actionable facts from new contents are preserved.
+- `coverage="incomplete"` when important facts are missing or over-compressed.
+
 ### `CoreUpdateResponse`
 
 - `should_update: bool`
 - `core_markdown: Optional[str]`
+
+Interpretation:
+
+- conservative default: keep `should_update=false` unless durable high-impact high-confidence updates exist.
+- `core_markdown` must preserve section boundaries `SOUL/TOOLS/RULE/USER`.
+- each bullet should belong to one section only.
+- exclude transient/session-only low-signal information.
+- keep core compact with a soft high-signal budget around 8 bullets.
+
+## Prompt Boundary Contract
+
+HAEMA prompt builders mark model input boundaries using tags:
+
+- `<raw_input> ... </raw_input>`
+- `<related_memories> ... </related_memories>`
+- `<new_contents> ... </new_contents>`
+- `<current_core_markdown> ... </current_core_markdown>`
+- `<candidate_new_memories> ... </candidate_new_memories>`
+
+These are prompt clarity markers, not runtime parser controls.
 
 ## Error Model
 

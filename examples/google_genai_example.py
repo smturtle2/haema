@@ -19,7 +19,7 @@ from haema import EmbeddingClient, LLMClient, Memory
 
 STORAGE_DIR = Path("./example_haema")
 EMBEDDING_MODEL = "gemini-embedding-001"
-LLM_MODEL = "gemini-3-flash-preview"
+LLM_MODEL = "gemini-2.5-flash"
 OUTPUT_DIMENSIONALITY = 768
 
 test = {
@@ -30,7 +30,7 @@ test = {
 
 
 class GoogleGenAIEmbeddingClient(EmbeddingClient):
-    def __init__(self, client: genai.Client, model: str = "gemini-embedding-001") -> None:
+    def __init__(self, client: genai.Client, model: str) -> None:
         self.client = client
         self.model = model
 
@@ -70,7 +70,7 @@ class GoogleGenAIEmbeddingClient(EmbeddingClient):
 
 
 class GoogleGenAILLMClient(LLMClient):
-    def __init__(self, client: genai.Client, model: str = "gemini-3-flash-preview") -> None:
+    def __init__(self, client: genai.Client, model: str) -> None:
         self.client = client
         self.model = model
 
@@ -137,4 +137,7 @@ def main() -> None:
 
 
 if __name__ == "__main__":
+    import time
+    start = time.time()
     main()
+    print(f"Execution time: {time.time() - start:.2f} seconds")

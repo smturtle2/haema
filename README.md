@@ -115,6 +115,48 @@ class MemoryReconstructionResponse(BaseModel):
 If output is empty or `coverage == "incomplete"`, HAEMA runs one refinement pass.
 If it still fails, HAEMA safely falls back to normalized `contents`.
 
+## Prompt Contracts (Layer Responsibility)
+
+HAEMA uses three independent prompt stages with separate outputs:
+
+- pre-memory split:
+  - input: one raw add string
+  - output schema: `PreMemorySplitResponse(contents)`
+  - responsibility: split factual units only (no core policy decision)
+- reconstruction:
+  - input: related memories + new contents
+  - output schema: `MemoryReconstructionResponse(memories, coverage)`
+  - responsibility: generate long-term memories only
+- core update:
+  - input: current core + reconstructed new memories
+  - output schema: `CoreUpdateResponse(should_update, core_markdown)`
+  - responsibility: conservative core update only
+
+Prompt user blocks are boundary-labeled with tags such as:
+
+- `<raw_input> ... </raw_input>`
+- `<related_memories> ... </related_memories>`
+- `<new_contents> ... </new_contents>`
+- `<current_core_markdown> ... </current_core_markdown>`
+- `<candidate_new_memories> ... </candidate_new_memories>`
+
+These tags are prompt-boundary markers for model clarity, not parser/runtime control logic.
+
+## Core Memory Policy
+
+Core memory should keep only durable, high-impact, high-confidence information.
+By prompt policy, candidate items should pass:
+
+1. durability across sessions
+2. material impact on future agent behavior
+3. high confidence grounded in evidence
+
+Core prompt policy also enforces:
+
+- strict section routing to one of `SOUL/TOOLS/RULE/USER`
+- exclusion of temporary/session-only/transient logs and noise
+- compact high-signal output with a soft target budget around 8 bullets total
+
 ## Storage Layout
 
 Given `path="./haema_store"`:

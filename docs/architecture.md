@@ -25,6 +25,27 @@ For each `add(contents)` call:
 9. Delete replaced related IDs only after successful upsert.
 10. Update core once with memories added in this call.
 
+## Stage Boundaries
+
+The three LLM-backed stages are independent and have different artifacts:
+
+1. pre-memory split
+- consumes one raw add input
+- emits `contents` for retrieval/reconstruction preparation
+- does not decide core policy
+
+2. reconstruction
+- consumes related memories + new contents
+- emits long-term `memories` and `coverage`
+- does not directly edit core
+
+3. core update
+- consumes current core + reconstructed new memories
+- emits `should_update/core_markdown`
+- governs durable core-only information
+
+Only the reconstruction output (`new_memories`) is passed into core update.
+
 ## Why One Reconstruction Pass
 
 - Reduces repeated LLM calls for multi-content adds.
@@ -49,3 +70,21 @@ Reconstruction prompt explicitly enforces:
 - conflict resolution favors new contents
 - independent facts should split into separate memories
 - output schema strictness (`memories`, `coverage`)
+
+Prompt input blocks are boundary-labeled with tags (`<raw_input>`, `<related_memories>`,
+`<new_contents>`, `<current_core_markdown>`, `<candidate_new_memories>`).
+These markers are used to clarify model input boundaries, not as parser-level runtime control.
+
+## Core Entry Policy (Prompt-Level)
+
+Core update prompt is intentionally conservative and requires coreworthiness:
+
+1. durability across sessions
+2. material impact on future behavior
+3. high confidence from evidence
+
+Items that fail the gate should be excluded from core. Prompt policy also asks for:
+
+- strict one-section routing (`SOUL`, `TOOLS`, `RULE`, `USER`)
+- exclusion of temporary/session-only/transient logs/noise
+- compact high-signal core with a soft target around 8 total bullets

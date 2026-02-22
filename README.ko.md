@@ -99,6 +99,48 @@ class MemoryReconstructionResponse(BaseModel):
 `memories`가 비었거나 `coverage == "incomplete"`이면 1회 보강 재시도를 수행합니다.  
 그래도 실패하면 정규화된 `contents`를 안전 폴백으로 저장합니다.
 
+## 프롬프트 계약 (레이어 책임 분리)
+
+HAEMA는 3단계 프롬프트를 독립적으로 사용하며, 각 단계의 출력 책임이 다릅니다.
+
+- pre-memory split:
+  - 입력: 단일 raw add 문자열
+  - 출력 스키마: `PreMemorySplitResponse(contents)`
+  - 책임: 사실 단위 분해만 수행 (core 정책 판단 금지)
+- reconstruction:
+  - 입력: 관련 기억 + 신규 contents
+  - 출력 스키마: `MemoryReconstructionResponse(memories, coverage)`
+  - 책임: long-term 기억 재구성만 수행
+- core update:
+  - 입력: 현재 core + 재구성된 신규 기억
+  - 출력 스키마: `CoreUpdateResponse(should_update, core_markdown)`
+  - 책임: 보수적인 core 갱신 판단만 수행
+
+프롬프트 입력 경계는 다음과 같은 태그로 표시합니다.
+
+- `<raw_input> ... </raw_input>`
+- `<related_memories> ... </related_memories>`
+- `<new_contents> ... </new_contents>`
+- `<current_core_markdown> ... </current_core_markdown>`
+- `<candidate_new_memories> ... </candidate_new_memories>`
+
+이 태그는 파싱/런타임 제어용이 아니라, 모델이 입력 경계를 정확히 인지하도록 돕는 표기입니다.
+
+## Core 메모리 정책
+
+core에는 장기적이고 영향도 높고 신뢰도 높은 정보만 남겨야 합니다.
+프롬프트 정책상 다음 기준을 모두 만족해야 core 후보가 됩니다.
+
+1. 장기성 (여러 세션에서 재사용 가능)
+2. 행동 영향도 (향후 응답/결정에 실질적 변화 유발)
+3. 신뢰도 (근거가 분명한 고신뢰 정보)
+
+또한 core 프롬프트는 다음을 요구합니다.
+
+- `SOUL/TOOLS/RULE/USER` 중 정확히 한 섹션으로 라우팅
+- 세션성/임시성/로그성 저신호 정보 제외
+- 전체를 고신호로 압축하고 soft budget 기준 약 8개 bullet 내 유지
+
 ## 저장 구조
 
 `path="./haema_store"` 기준:
