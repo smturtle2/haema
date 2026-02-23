@@ -12,6 +12,11 @@ Development:
 pip install -e ".[dev]"
 ```
 
+## Source of Truth
+
+API docstrings in `haema/` are authoritative. This guide is a quick checklist
+for implementing adapters and bootstrapping `Memory`.
+
 ## Minimal Setup
 
 Provide two adapters:
@@ -20,38 +25,52 @@ Provide two adapters:
 - `LLMClient`
 
 ```python
-from haema import Memory
+from haema import EmbeddingClient, LLMClient, Memory
+
+
+class MyEmbeddingClient(EmbeddingClient):
+    ...
+
+
+class MyLLMClient(LLMClient):
+    ...
+
 
 m = Memory(
     path="./haema_store",
     output_dimensionality=1536,
-    embedding_client=...,
-    llm_client=...,
+    embedding_client=MyEmbeddingClient(),
+    llm_client=MyLLMClient(),
     merge_top_k=3,
     merge_distance_cutoff=0.25,
 )
 ```
 
-## Embedding Adapter Requirements
+## Embedding Adapter Checklist
 
 Implement:
 
 - `embed_query(texts, output_dimensionality)`
 - `embed_document(texts, output_dimensionality)`
 
-Each must return:
+Contract:
 
-- 2D `numpy.ndarray`
-- dtype `float32`
-- shape `(len(texts), output_dimensionality)`
+- return a 2D `numpy.ndarray`
+- dtype must be `float32`
+- shape must be `(len(texts), output_dimensionality)`
+- keep query/document task settings separated when supported by provider
 
-## LLM Adapter Requirements
+## LLM Adapter Checklist
 
 Implement:
 
 - `generate_structured(system_prompt, user_prompt, response_model) -> dict[str, Any]`
 
-Must return a dict parseable by the provided Pydantic model.
+Contract:
+
+- return a dict parseable by `response_model.model_validate(...)`
+- propagate provider failures as exceptions
+- do not return free-form text when structured output is required
 
 ## Google GenAI Example
 

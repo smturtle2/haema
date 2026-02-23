@@ -12,28 +12,49 @@ ModelT = TypeVar("ModelT", bound=BaseModel)
 
 
 class EmbeddingClient(ABC):
+    """Abstract embedding adapter used by :class:`haema.Memory`.
+
+    Implementations must provide separate query/document embedding methods.
+    This allows providers to apply different task settings for retrieval queries
+    and stored memory documents.
+    """
+
     @abstractmethod
     def embed_query(self, texts: Sequence[str], output_dimensionality: int) -> NDArray[np.float32]:
-        """
-        Convert each input query text into a vector.
+        """Embed retrieval query texts.
 
-        Returns a 2D numpy array with:
-        - shape: (len(texts), output_dimensionality)
-        - dtype: float32
+        Args:
+            texts: Query strings to embed as one batch.
+            output_dimensionality: Expected embedding width for each query vector.
+
+        Returns:
+            A 2D `numpy.ndarray` with dtype `float32` and shape
+            `(len(texts), output_dimensionality)`.
+
+        Raises:
+            Exception: Provider-specific errors should be propagated.
         """
 
     @abstractmethod
     def embed_document(self, texts: Sequence[str], output_dimensionality: int) -> NDArray[np.float32]:
-        """
-        Convert each input document text into a vector.
+        """Embed memory document texts for storage.
 
-        Returns a 2D numpy array with:
-        - shape: (len(texts), output_dimensionality)
-        - dtype: float32
+        Args:
+            texts: Document strings to embed as one batch.
+            output_dimensionality: Expected embedding width for each document vector.
+
+        Returns:
+            A 2D `numpy.ndarray` with dtype `float32` and shape
+            `(len(texts), output_dimensionality)`.
+
+        Raises:
+            Exception: Provider-specific errors should be propagated.
         """
 
 
 class LLMClient(ABC):
+    """Abstract structured-output LLM adapter used by :class:`haema.Memory`."""
+
     @abstractmethod
     def generate_structured(
         self,
@@ -41,8 +62,23 @@ class LLMClient(ABC):
         user_prompt: str,
         response_model: type[ModelT],
     ) -> dict[str, Any]:
-        """
-        Generate a structured response for `response_model`.
+        """Generate a structured response for the requested schema.
 
-        Must return a dict that is parseable into `response_model`.
+        Args:
+            system_prompt: System-level instruction text.
+            user_prompt: User-level prompt text for the current task.
+            response_model: Pydantic model class used as the output schema.
+
+        Returns:
+            A dictionary parseable by `response_model.model_validate(...)`.
+
+        Raises:
+            Exception: Provider-specific errors should be propagated.
+
+        Example:
+            class MyModel(BaseModel):
+                value: str
+
+            raw = client.generate_structured("sys", "user", MyModel)
+            parsed = MyModel.model_validate(raw)
         """

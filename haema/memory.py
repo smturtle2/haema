@@ -36,6 +36,19 @@ ModelT = TypeVar("ModelT", bound=BaseModel)
 
 
 class Memory:
+    """User-facing memory store with core/latest/long-term layers.
+
+    Data is persisted under `path`:
+
+    - `<path>/db`: Chroma long-term vector store
+    - `<path>/core.md`: core memory markdown
+    - `<path>/latest.sqlite3`: latest-memory index
+
+    Use `add(...)` as the write entrypoint. HAEMA updates all layers from one
+    call, and read APIs are exposed through `get_core`, `get_latest`, and
+    `search`.
+    """
+
     COLLECTION_NAME = "memory"
     RETRYABLE_LLM_EXCEPTIONS = (ValidationError, ValueError, TypeError, ConnectionError, TimeoutError, OSError)
 
@@ -48,6 +61,40 @@ class Memory:
         merge_top_k: int = 3,
         merge_distance_cutoff: float = 0.25,
     ) -> None:
+        """Initialize a persistent memory store.
+
+        Args:
+            path: Storage root directory for HAEMA-managed files.
+            output_dimensionality: Required vector width for embeddings.
+            embedding_client: Embedding adapter implementing `EmbeddingClient`.
+            llm_client: Structured-output LLM adapter implementing `LLMClient`.
+            merge_top_k: Number of nearest related memories to consider per input.
+            merge_distance_cutoff: Maximum cosine distance for related-memory merge.
+
+        Returns:
+            None.
+
+        Raises:
+            ImportError: If `chromadb` is not installed.
+            ValueError: If numeric validation fails:
+                - `output_dimensionality <= 0`
+                - `merge_top_k <= 0`
+                - `merge_distance_cutoff < 0`
+
+        Example:
+            class MyEmbeddingClient(EmbeddingClient):
+                ...
+
+            class MyLLMClient(LLMClient):
+                ...
+
+            memory = Memory(
+                path="./haema_store",
+                output_dimensionality=1536,
+                embedding_client=MyEmbeddingClient(),
+                llm_client=MyLLMClient(),
+            )
+        """
         if chromadb is None:
             raise ImportError("chromadb is required to use Memory") from _CHROMADB_IMPORT_ERROR
         if output_dimensionality <= 0:
@@ -89,9 +136,37 @@ class Memory:
         self._bootstrap_latest_store_if_needed()
 
     def get_core(self) -> str:
+        """Return full core memory markdown.
+
+        Returns:
+            The full content of `<path>/core.md` as a UTF-8 string.
+
+        Example:
+            core = memory.get_core()
+            print(core)
+        """
         return self.core_path.read_text(encoding="utf-8")
 
     def get_latest(self, begin: int, count: int) -> list[str]:
+        """Return latest memory documents by recency.
+
+        Args:
+            begin: 1-indexed start position (`1` means the most recent item).
+            count: Maximum number of items to return.
+
+        Returns:
+            A list of memory documents sorted by `timestamp_ms` descending.
+
+        Raises:
+            ValueError: If `begin < 1`.
+
+        Behavior:
+            - If `count <= 0`, returns `[]`.
+            - If `begin` is out of range, returns `[]`.
+
+        Example:
+            latest = memory.get_latest(begin=1, count=5)
+        """
         if begin < 1:
             raise ValueError("begin must be >= 1")
         if count <= 0:
@@ -111,6 +186,21 @@ class Memory:
         return [row[0] for row in cursor.fetchall()]
 
     def search(self, content: str, n: int) -> list[str]:
+        """Semantically search long-term memories.
+
+        Args:
+            content: Query text to embed with `embed_query`.
+            n: Maximum number of matches to return.
+
+        Returns:
+            Top matched memory documents as plain strings.
+
+        Behavior:
+            - If `n <= 0`, returns `[]`.
+
+        Example:
+            hits = memory.search("user preferences", n=3)
+        """
         if n <= 0:
             return []
 
@@ -126,6 +216,38 @@ class Memory:
         return [document for document in documents_nested[0] if document]
 
     def add(self, contents: str | list[str]) -> None:
+        """Write new information and update all memory layers.
+
+        Args:
+            contents: Either one raw text (`str`) or multiple memory candidates
+                (`list[str]`).
+                - `str`: HAEMA first runs pre-memory splitting, then reconstruction.
+                - `list[str]`: HAEMA normalizes strings and reconstructs directly.
+
+        Returns:
+            None.
+
+        Raises:
+            TypeError: If `contents` is a list containing non-string items.
+            ValueError: If adapter-returned embedding batches violate required
+                shape/dimensionality constraints.
+            Exception: Provider or database errors are propagated.
+
+        Behavior:
+            1. Normalize input contents.
+            2. Find related long-term memories.
+            3. Reconstruct merged memories (with one refinement retry on low coverage).
+            4. Upsert new memories, then delete replaced related ones.
+            5. Update core memory once for the call.
+
+        Example:
+            memory.add(
+                [
+                    "User prefers concise, actionable answers.",
+                    "User is building HAEMA on ChromaDB.",
+                ]
+            )
+        """
         normalized_contents = self._normalize_contents_input(contents)
         if not normalized_contents:
             return

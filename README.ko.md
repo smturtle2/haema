@@ -36,15 +36,23 @@ pip install -e ".[dev]"
 ## 빠른 시작
 
 ```python
-from haema import Memory
+from haema import EmbeddingClient, LLMClient, Memory
+
+
+class MyEmbeddingClient(EmbeddingClient):
+    ...
+
+
+class MyLLMClient(LLMClient):
+    ...
 
 m = Memory(
-    path="./haema_store",
-    output_dimensionality=1536,
-    embedding_client=...,   # EmbeddingClient 구현체
-    llm_client=...,         # LLMClient 구현체
-    merge_top_k=3,
-    merge_distance_cutoff=0.25,
+    path="./haema_store",               # 저장 루트 디렉터리
+    output_dimensionality=1536,         # 임베딩 벡터 차원
+    embedding_client=MyEmbeddingClient(),
+    llm_client=MyLLMClient(),
+    merge_top_k=3,                      # 입력별 관련 후보 수
+    merge_distance_cutoff=0.25,         # 관련 메모리 거리 임계값
 )
 
 m.add([
@@ -54,7 +62,7 @@ m.add([
 
 print(m.get_core())
 print(m.get_latest(begin=1, count=5))
-print(m.search("사용자 선호", 3))
+print(m.search("사용자 선호", n=3))
 ```
 
 Google GenAI 예제:
@@ -63,30 +71,61 @@ Google GenAI 예제:
 
 ## 공개 API
 
-- `Memory(path, output_dimensionality, embedding_client, llm_client, merge_top_k=3, merge_distance_cutoff=0.25)`
-- `get_core() -> str`
-- `get_latest(begin: int, count: int) -> list[str]`
-- `search(content: str, n: int) -> list[str]`
-- `add(contents: str | list[str]) -> None`
+### 생성자
 
-## 클라이언트 인터페이스
+`Memory(path, output_dimensionality, embedding_client, llm_client, merge_top_k=3, merge_distance_cutoff=0.25)`
+
+- `path: str | Path`: 저장 루트 디렉터리
+- `output_dimensionality: int`: 임베딩 차원 (`> 0`)
+- `embedding_client: EmbeddingClient`: query/document 임베딩 어댑터
+- `llm_client: LLMClient`: 구조화 출력 어댑터
+- `merge_top_k: int`: 입력별 관련 후보 수 (기본 `3`, `> 0`)
+- `merge_distance_cutoff: float`: 관련 메모리 거리 임계값 (기본 `0.25`, `>= 0`)
+
+검증/예외:
+
+- `output_dimensionality <= 0` -> `ValueError`
+- `merge_top_k <= 0` -> `ValueError`
+- `merge_distance_cutoff < 0` -> `ValueError`
+- `chromadb` 미설치 -> `ImportError`
+
+### 메서드
+
+- `get_core() -> str`: `<path>/core.md` 전체 텍스트 반환
+- `get_latest(begin: int, count: int) -> list[str]`: 최신순 슬라이스 (1-index)
+- `search(content: str, n: int) -> list[str]`: long-term 메모리 의미 검색
+- `add(contents: str | list[str]) -> None`: 3개 레이어를 한 번에 갱신하는 쓰기 API
+
+동작 규약:
+
+- `get_latest(begin < 1)`은 `ValueError`
+- `get_latest(count <= 0)`은 `[]`
+- `search(n <= 0)`은 `[]`
+- `add(str)`은 pre-memory split 후 재구성, `add(list[str])`는 정규화 후 바로 재구성
+
+## 어댑터 구현 가이드
 
 ### `EmbeddingClient`
 
 - `embed_query(texts, output_dimensionality) -> np.ndarray`
 - `embed_document(texts, output_dimensionality) -> np.ndarray`
 
-반환 형식:
+체크리스트:
 
-- 2D `numpy.ndarray`
-- dtype `float32`
-- shape `(len(texts), output_dimensionality)`
+- 2D `numpy.ndarray` 반환
+- dtype은 `float32`
+- shape은 `(len(texts), output_dimensionality)`
+- 제공자가 지원하면 query/document task 설정을 분리
 
 ### `LLMClient`
 
 - `generate_structured(system_prompt, user_prompt, response_model) -> dict[str, Any]`
 
-전달된 Pydantic 모델로 파싱 가능한 dict를 반환해야 합니다.
+체크리스트:
+
+- `response_model.model_validate(...)`로 파싱 가능한 dict 반환
+- 공급자 오류는 예외로 전파
+- 자유 텍스트 대신 구조화 결과(JSON dict) 반환
 
 ## 재구성 스키마
 

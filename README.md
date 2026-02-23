@@ -38,15 +38,23 @@ pip install -e ".[dev]"
 ## Quick Start
 
 ```python
-from haema import Memory
+from haema import EmbeddingClient, LLMClient, Memory
+
+
+class MyEmbeddingClient(EmbeddingClient):
+    ...
+
+
+class MyLLMClient(LLMClient):
+    ...
 
 m = Memory(
-    path="./haema_store",
-    output_dimensionality=1536,
-    embedding_client=...,   # your EmbeddingClient implementation
-    llm_client=...,         # your LLMClient implementation
-    merge_top_k=3,
-    merge_distance_cutoff=0.25,
+    path="./haema_store",               # storage root
+    output_dimensionality=1536,         # embedding vector width
+    embedding_client=MyEmbeddingClient(),
+    llm_client=MyLLMClient(),
+    merge_top_k=3,                      # related candidates per input
+    merge_distance_cutoff=0.25,         # related-memory distance threshold
 )
 
 m.add([
@@ -54,9 +62,9 @@ m.add([
     "The user is building HAEMA on top of ChromaDB.",
 ])
 
-print(m.get_core())                    # str
-print(m.get_latest(begin=1, count=5)) # list[str]
-print(m.search("user preference", 3))  # list[str]
+print(m.get_core())                      # str
+print(m.get_latest(begin=1, count=5))   # list[str]
+print(m.search("user preference", n=3)) # list[str]
 ```
 
 Real provider example:
@@ -69,38 +77,57 @@ Real provider example:
 
 `Memory(path, output_dimensionality, embedding_client, llm_client, merge_top_k=3, merge_distance_cutoff=0.25)`
 
-- `path`: storage root directory
-- `output_dimensionality`: embedding output dimension
-- `embedding_client`: user embedding adapter
-- `llm_client`: user structured-output LLM adapter
-- `merge_top_k`: related candidate count per new content (default `3`)
-- `merge_distance_cutoff`: related-memory distance threshold (default `0.25`)
+- `path: str | Path`: storage root directory
+- `output_dimensionality: int`: required embedding dimension (`> 0`)
+- `embedding_client: EmbeddingClient`: query/document embedding adapter
+- `llm_client: LLMClient`: structured-output adapter
+- `merge_top_k: int`: related candidate count per new content (default `3`, must be `> 0`)
+- `merge_distance_cutoff: float`: related-memory distance threshold (default `0.25`, must be `>= 0`)
+
+Validation:
+
+- `output_dimensionality <= 0` -> `ValueError`
+- `merge_top_k <= 0` -> `ValueError`
+- `merge_distance_cutoff < 0` -> `ValueError`
+- missing `chromadb` -> `ImportError`
 
 ### Methods
 
-- `get_core() -> str`
-- `get_latest(begin: int, count: int) -> list[str]`
-- `search(content: str, n: int) -> list[str]`
-- `add(contents: str | list[str]) -> None`
+- `get_core() -> str`: returns full `<path>/core.md` text.
+- `get_latest(begin: int, count: int) -> list[str]`: 1-indexed latest slice sorted by descending timestamp.
+- `search(content: str, n: int) -> list[str]`: semantic search over long-term memory documents.
+- `add(contents: str | list[str]) -> None`: single write API that updates long-term/latest/core layers.
 
-## Client Interfaces
+Method behavior:
+
+- `get_latest(begin < 1)` raises `ValueError`
+- `get_latest(count <= 0)` returns `[]`
+- `search(n <= 0)` returns `[]`
+- `add(str)` runs pre-memory split first; `add(list[str])` uses normalized list items directly
+
+## How To Implement Adapters
 
 ### `EmbeddingClient`
 
 - `embed_query(texts, output_dimensionality) -> np.ndarray`
 - `embed_document(texts, output_dimensionality) -> np.ndarray`
 
-Both must return:
+Checklist:
 
-- 2D `numpy.ndarray`
-- dtype `float32`
-- shape `(len(texts), output_dimensionality)`
+- return a 2D `numpy.ndarray`
+- dtype must be `float32`
+- shape must be `(len(texts), output_dimensionality)`
+- keep query/document task settings separated when your provider supports it
 
 ### `LLMClient`
 
 - `generate_structured(system_prompt, user_prompt, response_model) -> dict[str, Any]`
 
-Must return a dict parseable by the provided Pydantic model.
+Checklist:
+
+- return a `dict[str, Any]` parseable by `response_model.model_validate(...)`
+- propagate provider failures as exceptions
+- avoid returning unstructured free-form text
 
 ## Reconstruction Schema
 
